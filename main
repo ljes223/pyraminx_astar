@@ -1,0 +1,368 @@
+import tkinter as tk
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+import heapq
+from copy import deepcopy
+from collections import deque
+
+class PyraminxState:
+    def __init__(self, faces):
+        self.faces = faces
+        self.g = 0  # cost from start to current node
+        self.h = 0  # heuristic cost to goal
+        self.f = 0  # total cost
+        self.parent = None  # parent state for path reconstruction
+        self.move = None  # move that led to this state
+
+    def __lt__(self, other):
+        return self.f < other.f
+
+    def __eq__(self, other):
+        return str(self.faces) == str(other.faces)
+
+    def __hash__(self):
+        return hash(str(self.faces))
+
+class Pyraminx:
+    def __init__(self, master):
+        self.master = master
+
+        # create a frame for the canvas
+        self.canvas_frame = tk.Frame(self.master)
+        self.canvas_frame.pack(side=tk.LEFT, padx=10, pady=10)
+        self.canvas = tk.Canvas(self.canvas_frame, width=600, height=600)
+        self.canvas.pack()
+        self.colors = {'F': 'green', 'R': 'red', 'D': 'blue', 'L': 'yellow'}
+        self.letters = {'F': 'G', 'R': 'R', 'D': 'B', 'L': 'Y'}
+        self.original_faces = {face: [[color] * (2 * i + 1) for i in range(4)] for face, color in self.letters.items()}
+        self.faces = deepcopy(self.original_faces)  # initialize faces
+
+        # initialize moves
+        self.moves = [
+            self.move_u, self.move_u2, self.move_u3,
+            self.move_r, self.move_r2, self.move_r3,
+            self.move_l, self.move_l2, self.move_l3,
+            self.move_b, self.move_b2, self.move_b3
+        ]
+        self.counterclockwise_moves = [
+            self.move_u_ccw, self.move_u2_ccw, self.move_u3_ccw,
+            self.move_r_ccw, self.move_r2_ccw, self.move_r3_ccw, 
+            self.move_l_ccw, self.move_l2_ccw, self.move_l3_ccw,
+            self.move_b_ccw, self.move_b2_ccw, self.move_b3_ccw
+        ]
+
+        # track nodes expanded during search
+        self.nodes_expanded = 0 
+
+    def draw_letter(self, x, y, letter, color):
+        self.canvas.create_text(x, y, text=letter, font=("Arial", 14))
+
+    def draw_face(self, start_x, start_y, face):
+        size = 25  # adjusted size for better spacing
+        x, y = start_x, start_y
+        for i, row in enumerate(self.faces[face]):
+            for j, letter in enumerate(row):
+                letter_color = self.colors[face]
+                self.draw_letter(x + j * size, y + i * size, letter, letter_color)
+            x -= size // 2
+
+    def draw_pyraminx(self):
+        self.canvas.delete("all")
+        self.draw_face(300, 50, 'F')    # front face
+        self.draw_face(300, 450, 'D')   # down face
+        self.draw_face(120, 250, 'L')   # left face
+        self.draw_face(480, 250, 'R')   # right face
+
+    def display_move(self, move_number):
+        self.canvas.delete("all")
+        self.draw_pyraminx()  # draw current state
+        self.canvas.create_text(300, 200, text=f"Move {move_number}", font=("Arial", 20))
+        self.master.update()
+        self.master.after(1000)  # pause for a second to show the move
+
+    # move methods (clockwise - for scrambling)
+    def move_u(self, faces):
+        faces['F'][0], faces['L'][0], faces['R'][0] = \
+            faces['R'][0], faces['F'][0], faces['L'][0]
+
+    def move_u2(self, faces):
+        self.move_u(faces)
+        faces['F'][1], faces['L'][1], faces['R'][1] = \
+            faces['R'][1], faces['F'][1], faces['L'][1]
+
+    def move_u3(self, faces):
+        self.move_u2(faces)
+        faces['F'][2], faces['L'][2], faces['R'][2] = \
+            faces['R'][2], faces['F'][2], faces['L'][2]
+
+    def move_r(self, faces):
+        faces['F'][-1][-1], faces['D'][-1][-1], faces['R'][-1][0] = \
+            faces['D'][-1][-1], faces['R'][-1][0], faces['F'][-1][-1]
+
+    def move_r2(self, faces):
+        self.move_r(faces)
+        faces['F'][-1][4], faces['F'][-1][5], faces['F'][2][-1], \
+            faces['D'][-1][4], faces['D'][-1][5], faces['D'][2][-1], \
+            faces['R'][-1][2], faces['R'][-1][1], faces['R'][2][0] = \
+            faces['D'][2][-1], faces['D'][-1][5], faces['D'][-1][4], \
+            faces['R'][-1][2], faces['R'][-1][1], faces['R'][2][0], \
+            faces['F'][2][-1], faces['F'][-1][5], faces['F'][-1][4]
+
+    def move_r3(self, faces):
+        self.move_r2(faces)
+        faces['F'][1][-1], faces['F'][2][3], faces['F'][2][2], faces['F'][-1][3], faces['F'][-1][2], \
+            faces['D'][-1][2], faces['D'][-1][3], faces['D'][2][2], faces['D'][2][3], faces['D'][1][2], \
+            faces['R'][-1][4], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][1], faces['R'][1][0] = \
+            faces['D'][-1][2], faces['D'][-1][3], faces['D'][2][2], faces['D'][2][3], faces['D'][1][2], \
+            faces['R'][-1][4], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][1], faces['R'][1][0], \
+            faces['F'][1][-1], faces['F'][2][3], faces['F'][2][2], faces['F'][-1][3], faces['F'][-1][2]
+
+    def move_l(self, faces):
+        faces['F'][-1][0], faces['L'][-1][-1], faces['D'][-1][0] = \
+            faces['L'][-1][-1], faces['D'][-1][0], faces['F'][-1][0]
+
+    def move_l2(self, faces):
+        self.move_l(faces)
+        faces['F'][-1][2], faces['F'][-1][1], faces['F'][2][0], \
+            faces['L'][2][-1], faces['L'][-1][5], faces['L'][-1][4], \
+            faces['D'][2][0], faces['D'][-1][1], faces['D'][-1][2] = \
+            faces['L'][2][-1], faces['L'][-1][5], faces['L'][-1][4], \
+            faces['D'][2][0], faces['D'][-1][1], faces['D'][-1][2], \
+            faces['F'][-1][2], faces['F'][-1][1], faces['F'][2][0]
+
+    def move_l3(self, faces):
+        self.move_l2(faces)
+        faces['F'][-1][4], faces['F'][-1][3], faces['F'][2][2], faces['F'][2][1], faces['F'][1][0], \
+            faces['L'][1][-1], faces['L'][2][3], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][2], \
+            faces['D'][1][0], faces['D'][2][1], faces['D'][2][2], faces['D'][-1][3], faces['D'][-1][4] = \
+            faces['L'][1][-1], faces['L'][2][3], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][2], \
+            faces['D'][1][0], faces['D'][2][1], faces['D'][2][2], faces['D'][-1][3], faces['D'][-1][4], \
+            faces['F'][-1][4], faces['F'][-1][3], faces['F'][2][2], faces['F'][2][1], faces['F'][1][0]
+
+    def move_b(self, faces):
+        faces['D'][0][0], faces['L'][-1][0], faces['R'][-1][-1] = \
+            faces['R'][-1][-1], faces['D'][0][0], faces['L'][-1][0]
+
+    def move_b2(self, faces):
+        self.move_b(faces)
+        faces['D'][1][0], faces['D'][1][1], faces['D'][1][2], \
+            faces['R'][-1][4], faces['R'][-1][5], faces['R'][2][-1], \
+            faces['L'][2][0], faces['L'][-1][1], faces['L'][-1][2] = \
+            faces['R'][-1][4], faces['R'][-1][5], faces['R'][2][-1], \
+            faces['L'][2][0], faces['L'][-1][1], faces['L'][-1][2], \
+            faces['D'][1][0], faces['D'][1][1], faces['D'][1][2]
+
+    def move_b3(self, faces):
+        self.move_b2(faces)
+        faces['D'][2][0], faces['D'][2][1], faces['D'][2][2], faces['D'][2][3], faces['D'][2][4], \
+            faces['R'][-1][2], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][3], faces['R'][1][-1], \
+            faces['L'][1][0], faces['L'][2][1], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][4] = \
+            faces['R'][-1][2], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][3], faces['R'][1][-1], \
+            faces['L'][1][0], faces['L'][2][1], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][4], \
+            faces['D'][2][0], faces['D'][2][1], faces['D'][2][2], faces['D'][2][3], faces['D'][2][4]
+
+    # move methods (counterclockwise - for solving)
+    def move_u_ccw(self, faces):
+        faces['F'][0], faces['L'][0], faces['R'][0] = \
+            faces['L'][0], faces['R'][0], faces['F'][0]
+
+    def move_u2_ccw(self, faces):
+        self.move_u_ccw(faces)
+        faces['F'][1], faces['L'][1], faces['R'][1] = \
+            faces['L'][1], faces['R'][1], faces['F'][1]
+
+    def move_u3_ccw(self, faces):
+        self.move_u2_ccw(faces)
+        faces['F'][2], faces['L'][2], faces['R'][2] = \
+            faces['L'][2], faces['R'][2], faces['F'][2]
+
+    def move_r_ccw(self, faces):
+        faces['F'][-1][-1], faces['D'][-1][-1], faces['R'][-1][0] = \
+            faces['R'][-1][0], faces['F'][-1][-1], faces['D'][-1][-1]
+
+    def move_r2_ccw(self, faces):
+        self.move_r_ccw(faces)
+        faces['F'][-1][4], faces['F'][-1][5], faces['F'][2][-1], \
+            faces['D'][-1][4], faces['D'][-1][5], faces['D'][2][-1], \
+            faces['R'][-1][2], faces['R'][-1][1], faces['R'][2][0] = \
+            faces['R'][2][0], faces['R'][-1][1], faces['R'][-1][2], \
+            faces['F'][2][-1], faces['F'][-1][5], faces['F'][-1][4], \
+            faces['D'][-1][4], faces['D'][-1][5], faces['D'][2][-1]
+
+    def move_r3_ccw(self, faces):
+        self.move_r2_ccw(faces)
+        faces['F'][1][-1], faces['F'][2][3], faces['F'][2][2], faces['F'][-1][3], faces['F'][-1][2], \
+            faces['D'][-1][2], faces['D'][-1][3], faces['D'][2][2], faces['D'][2][3], faces['D'][1][2], \
+            faces['R'][-1][4], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][1], faces['R'][1][0] = \
+            faces['R'][-1][4], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][1], faces['R'][1][0], \
+            faces['F'][1][-1], faces['F'][2][3], faces['F'][2][2], faces['F'][-1][3], faces['F'][-1][2], \
+            faces['D'][-1][2], faces['D'][-1][3], faces['D'][2][2], faces['D'][2][3], faces['D'][1][2]
+
+    def move_l_ccw(self, faces):
+        faces['F'][-1][0], faces['L'][-1][-1], faces['D'][-1][0] = \
+            faces['D'][-1][0], faces['F'][-1][0], faces['L'][-1][-1]
+
+    def move_l2_ccw(self, faces):
+        self.move_l_ccw(faces)
+        faces['F'][-1][2], faces['F'][-1][1], faces['F'][2][0], \
+            faces['L'][2][-1], faces['L'][-1][5], faces['L'][-1][4], \
+            faces['D'][2][0], faces['D'][-1][1], faces['D'][-1][2] = \
+            faces['D'][2][0], faces['D'][-1][1], faces['D'][-1][2], \
+            faces['F'][-1][2], faces['F'][-1][1], faces['F'][2][0], \
+            faces['L'][2][-1], faces['L'][-1][5], faces['L'][-1][4]
+
+    def move_l3_ccw(self, faces):
+        self.move_l2_ccw(faces)
+        faces['F'][-1][4], faces['F'][-1][3], faces['F'][2][2], faces['F'][2][1], faces['F'][1][0], \
+            faces['L'][1][-1], faces['L'][2][3], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][2], \
+            faces['D'][1][0], faces['D'][2][1], faces['D'][2][2], faces['D'][-1][3], faces['D'][-1][4] = \
+            faces['D'][1][0], faces['D'][2][1], faces['D'][2][2], faces['D'][-1][3], faces['D'][-1][4], \
+            faces['F'][-1][4], faces['F'][-1][3], faces['F'][2][2], faces['F'][2][1], faces['F'][1][0], \
+            faces['L'][1][-1], faces['L'][2][3], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][2]
+
+    def move_b_ccw(self, faces):
+        faces['D'][0][0], faces['L'][-1][0], faces['R'][-1][-1] = \
+            faces['L'][-1][0], faces['R'][-1][-1], faces['D'][0][0]
+
+    def move_b2_ccw(self, faces):
+        self.move_b_ccw(faces)
+        faces['D'][1][0], faces['D'][1][1], faces['D'][1][2], \
+            faces['R'][-1][4], faces['R'][-1][5], faces['R'][2][-1], \
+            faces['L'][2][0], faces['L'][-1][1], faces['L'][-1][2] = \
+            faces['L'][2][0], faces['L'][-1][1], faces['L'][-1][2], \
+            faces['D'][1][0], faces['D'][1][1], faces['D'][1][2], \
+            faces['R'][-1][4], faces['R'][-1][5], faces['R'][2][-1]
+
+    def move_b3_ccw(self, faces):
+        self.move_b2_ccw(faces)
+        faces['D'][2][0], faces['D'][2][1], faces['D'][2][2], faces['D'][2][3], faces['D'][2][4], \
+            faces['R'][-1][2], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][3], faces['R'][1][-1], \
+            faces['L'][1][0], faces['L'][2][1], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][4] = \
+            faces['L'][1][0], faces['L'][2][1], faces['L'][2][2], faces['L'][-1][3], faces['L'][-1][4], \
+            faces['D'][2][0], faces['D'][2][1], faces['D'][2][2], faces['D'][2][3], faces['D'][2][4], \
+            faces['R'][-1][2], faces['R'][-1][3], faces['R'][2][2], faces['R'][2][3], faces['R'][1][-1]
+
+    def scramble(self, k): # scramble the triangles
+        moves_applied = []
+        for _ in range(k): # k random moves
+            move = random.choice(self.moves)
+            move(self.faces)
+            moves_applied.append(move.__name__)
+        print(f"Scramble sequence ({k} moves):", moves_applied) # print sequence
+
+    # heuristic: max number of distinct colors on any face, minus one
+    def calculate_heuristic(self, faces):
+        max_colors = 0
+        for face in faces.values():
+            unique_colors = len(set(color for row in face for color in row))
+            max_colors = max(max_colors, unique_colors)
+        return max_colors - 1  # returns 0 to 3 based on the number of distinct colors
+
+    # start the iterative A* search
+    def iterative_a_star_search(self, max_depth=50):
+        start_state = PyraminxState(deepcopy(self.faces))  # create the initial state
+        start_state.h = self.calculate_heuristic(start_state.faces)  # calculate heuristic
+        start_state.f = start_state.g + start_state.h  # compute total cost
+        for depth_limit in range(1, max_depth + 1):  # iterate through depth limits
+            result = self.depth_limited_a_star(start_state, depth_limit)  # perform depth-limited search
+            if result is not None:  # if a solution is found, return it
+                return result
+        return None  # if a solution is not found within max_depth, return no solution
+    
+    def depth_limited_a_star(self, start_state, depth_limit):
+        open_list = []  # priority queue for exploring states
+        closed_set = set()  # set to track explored states
+        heapq.heappush(open_list, start_state)  # add initial state to open list
+        self.nodes_expanded = 0  # reset nodes expanded counter
+        while open_list:  # while there are states to explore
+            current_state = heapq.heappop(open_list)  # get the state with the lowest cost
+            self.nodes_expanded += 1  # increment nodes expanded
+            if self.is_goal_state(current_state.faces):  # check if goal state is reached
+                return self.reconstruct_path(current_state)  # return the path to the solution
+            if current_state.g >= depth_limit:  # if depth limit reached, skip this state
+                continue
+            state_str = str(current_state.faces)  # create a string representation of the state
+            if state_str in closed_set:  # skip already explored states
+                continue
+            closed_set.add(state_str)  # mark the state as explored
+            # perform possible moves from the current state
+            for move in self.counterclockwise_moves:
+                new_faces = self.perform_move(current_state.faces, move)  # apply the move
+                new_state = PyraminxState(new_faces)  # create a new state
+                new_state.g = current_state.g + 1  # update cost from start
+                new_state.h = self.calculate_heuristic(new_state.faces)  # calculate heuristic for new state
+                new_state.f = new_state.g + new_state.h  # total cost for new state
+                new_state.parent = current_state  # set parent for path reconstruction
+                new_state.move = move.__name__  # store the move name
+                heapq.heappush(open_list, new_state)  # add new state to the open list
+        return None  # if no solution found within the depth limit, return no solution
+
+    def is_goal_state(self, faces):
+        return all(all(cell == face[0][0] for row in face for cell in row) for face in faces.values())
+
+    def perform_move(self, faces, move):
+        new_faces = deepcopy(faces)
+        move_method = getattr(self, move.__name__)
+        move_method(new_faces)
+        return new_faces
+
+    # reconstruct the path to print
+    def reconstruct_path(self, state):
+        path = deque()
+        while state.parent:
+            path.appendleft(state.move)
+            state = state.parent
+        return list(path)
+
+    # reset pyraminx to start state
+    def reset_pyraminx(self):
+        self.faces = deepcopy(self.original_faces)
+        self.draw_pyraminx()
+
+    # run k iterations with 5 puzzles each
+    def run_experiments(self):
+        nodes_expanded_data = []
+        for k in range(3, 9):
+            print(f"Running experiments for k={k} random moves:")
+            total_nodes_expanded = 0
+            for i in range(5):  # 5 instances for each k
+                self.reset_pyraminx()  # reset Pyraminx to its initial state
+                self.scramble(k)
+                # display scrambled state first
+                self.draw_pyraminx()
+                self.canvas.create_text(300, 200, text="Scrambled", font=("Arial", 20))
+                self.master.update()
+                solution = self.iterative_a_star_search(max_depth=50)
+                if solution is None:
+                    print(f"Puzzle {i + 1}: No solution found.")
+                    continue
+                # show each move with its updated state
+                for move in solution:
+                    self.master.after(1000)
+                    getattr(self, move)(self.faces)
+                    self.display_move(move)  # display the move name
+                # print to terminal
+                print(f"Puzzle {i + 1}: Solved in {len(solution)} moves, {self.nodes_expanded} nodes expanded, moves to goal state: {solution}")
+                total_nodes_expanded += self.nodes_expanded
+            avg_nodes_expanded = total_nodes_expanded / 5
+            nodes_expanded_data.append((k, avg_nodes_expanded))
+            print()
+        self.plot_results(nodes_expanded_data)
+
+    # plot the results
+    def plot_results(self, nodes_expanded_data):
+        k_values = [item[0] for item in nodes_expanded_data]
+        avg_nodes_expanded = [item[1] for item in nodes_expanded_data]
+        plt.figure(figsize=(8, 6))
+        plt.plot(k_values, avg_nodes_expanded, marker='o', linestyle='-', color='b')
+        plt.title('Average Nodes Expanded vs k (Randomized Moves)')
+        plt.xlabel('Number of Randomized Moves (k)')
+        plt.ylabel('Average Nodes Expanded')
+        plt.grid(True)
+        plt.show()
+
+# main execution
+root = tk.Tk()
+pyraminx_gui = Pyraminx(root)
+pyraminx_gui.run_experiments()
